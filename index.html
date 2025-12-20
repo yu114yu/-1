@@ -1,0 +1,2300 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>災禍應變志工媒合系統</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    /************************************************************
+     * 1. 模擬使用者 & SPA 狀態
+     ************************************************************/
+
+    const USERS = {
+      publisher: {
+        id: "publisher_001",
+        name: localStorage.getItem('publisherName') || "任務發布者 Demo",
+        role: "publisher"
+      },
+      volunteer: { id: "volunteer_001", name: "志工 Demo", role: "volunteer" }
+    };
+
+    let currentUser = USERS.publisher;
+
+    let currentPage = "roleSelect"; // roleSelect | publisherDashboard | publisherMissionDetail | editMissionForm | volunteerProfileForm | volunteerMissionList
+    let currentMission = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    function navigateTo(page, params = {}) {
+      console.log(`Navigating to page: ${page}`, params); // 除錯：記錄導航
+      currentPage = page;
+      if (page === "roleSelect") renderRoleSelect();
+      else if (page === "publisherDashboard") renderPublisherDashboard();
+      else if (page === "publisherMissionDetail") {
+        currentMission = params.mission;
+        renderPublisherMissionDetail(currentMission);
+      } else if (page === "editMissionForm") {
+        currentMission = params.mission;
+        renderEditMissionForm(currentMission);
+      } else if (page === "createMissionForm") renderCreateMissionForm();
+      else if (page === "volunteerProfileForm") renderVolunteerProfileForm();
+      else if (page === "volunteerMissionList") renderVolunteerMissionList();
+      else if (page === "missionChat") {
+        currentMission = params.mission;
+        renderMissionChat(currentMission);
+      }
+      else {
+        renderRoleSelect();
+      }
+    }
+
+    /************************************************************
+     * 2. LocalStorage "資料庫" 操作
+     ************************************************************/
+
+    const STORAGE_KEY = "volunteerApp";
+
+    function loadDB() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      let db;
+      if (!raw) {
+        db = {
+          missions: [],
+          accepts: [],
+          notifications: [],
+          profiles: [],
+          chatMessages: [],
+          seq: 1
+        };
+      } else {
+        db = JSON.parse(raw);
+        if (!db.profiles) db.profiles = [];
+        if (!db.chatMessages) db.chatMessages = [];
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+      return db;
+    }
+
+    function saveDB(db) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+    }
+
+    function genId(prefix) {
+      const db = loadDB();
+      const id = `${prefix}_${db.seq}`;
+      db.seq += 1;
+      saveDB(db);
+      return id;
+    }
+
+    // ---- Missions CRUD ----
+    function getMissions() {
+      return loadDB().missions;
+    }
+
+    function getMissionById(id) {
+      return getMissions().find((m) => m.id === id) || null;
+    }
+
+    function updateMission(id, updates) {
+      const db = loadDB();
+      const missionIndex = db.missions.findIndex((m) => m.id === id);
+      if (missionIndex >= 0) {
+        db.missions[missionIndex] = { ...db.missions[missionIndex], ...updates };
+        saveDB(db);
+        return true;
+      }
+      return false;
+    }
+
+    function addMission(mission) {
+      const db = loadDB();
+      db.missions.push(mission);
+      saveDB(db);
+    }
+
+    // ---- Accepts ----
+    function getAcceptsByMission(missionId) {
+      return loadDB().accepts.filter((a) => a.missionId === missionId);
+    }
+
+    function addAccept(record) {
+      const db = loadDB();
+      db.accepts.push(record);
+      saveDB(db);
+    }
+
+    // ---- Notifications ----
+    function getNotificationsByPublisher(publisherId) {
+      return loadDB().notifications
+        .filter((n) => n.publisherId === publisherId)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+
+    function addNotification(noti) {
+      const db = loadDB();
+      db.notifications.push(noti);
+      saveDB(db);
+    }
+
+    function markAllNotificationsRead(publisherId) {
+      const db = loadDB();
+      db.notifications = db.notifications.map((n) =>
+        n.publisherId === publisherId ? { ...n, read: true } : n
+      );
+      saveDB(db);
+    }
+
+    // ---- User Utilities ----
+    function getUserNameById(userId) {
+      if (userId === USERS.publisher.id) {
+        return USERS.publisher.name;
+      } else if (userId === USERS.volunteer.id) {
+        return USERS.volunteer.name;
+      }
+      return "未知用戶";
+    }
+
+    // ---- Chat Messages ----
+    function getChatMessagesByMission(missionId) {
+      return loadDB().chatMessages
+        .filter((msg) => msg.missionId === missionId)
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    }
+
+    function addChatMessage(message) {
+      const db = loadDB();
+      db.chatMessages.push(message);
+      saveDB(db);
+    }
+
+    // ---- Map Utilities ----
+    function generateMapHtml(location, height = "300") {
+      const encodedLocation = encodeURIComponent(location);
+      const mapId = 'map-' + Math.random().toString(36).substr(2, 9);
+      return `
+        <div class="map-container">
+          <div class="relative">
+            <iframe
+              src="https://maps.google.com/maps?q=${encodedLocation}&output=embed&z=15&t=m&hl=zh-TW"
+              width="100%"
+              height="${height}"
+              frameborder="0"
+              style="border:0; border-radius:0.375rem;"
+              allowfullscreen
+              loading="lazy"
+              referrerpolicy="no-referrer-when-downgrade">
+            </iframe>
+            <div class="absolute top-2 right-2">
+              <button
+                onclick="showMapFallback(this, '${encodedLocation}')"
+                class="bg-white bg-opacity-90 hover:bg-opacity-100 text-gray-600 hover:text-gray-800 px-2 py-1 rounded text-xs shadow-sm border transition-colors"
+                title="如果地圖載入失敗，點擊這裡查看替代方案"
+              >
+                🔄
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function toggleMissionDetail(detailId) {
+      const detailElement = document.getElementById(detailId);
+      if (detailElement) {
+        detailElement.style.display = detailElement.style.display === 'none' ? 'block' : 'none';
+      }
+    }
+
+    function showMapFallback(button, encodedLocation) {
+      const container = button.closest('.map-container');
+      const mapDiv = button.closest('.relative');
+
+      // 隱藏地圖區域
+      mapDiv.style.display = 'none';
+
+      // 創建備用地圖
+      const fallback = document.createElement('div');
+      fallback.style.cssText = `width:100%; height:${mapDiv.offsetHeight}px; background:#f3f4f6; border:1px solid #d1d5db; border-radius:0.375rem; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:1rem;`;
+      fallback.innerHTML = `
+        <div class="text-gray-600 mb-2">
+          <svg class="w-8 h-8 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+          </svg>
+          <p class="text-sm font-medium">切換到備用地圖</p>
+        </div>
+        <a
+          href="https://www.google.com/maps/search/?api=1&query=${encodedLocation}"
+          target="_blank"
+          class="inline-flex items-center px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+        >
+          <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+          </svg>
+          在Google Maps中查看
+        </a>
+      `;
+
+      container.appendChild(fallback);
+    }
+
+    // ---- Profiles ----
+    function getProfileById(id) {
+      return loadDB().profiles.find((p) => p.id === id) || null;
+    }
+
+    function saveProfile(profile) {
+      const db = loadDB();
+      const existingIndex = db.profiles.findIndex((p) => p.id === profile.id);
+      if (existingIndex >= 0) {
+        db.profiles[existingIndex] = profile;
+      } else {
+        db.profiles.push(profile);
+      }
+      saveDB(db);
+    }
+
+    /************************************************************
+     * 新增：任務自動匹配系統
+     ************************************************************/
+
+    // 計算任務與志工的匹配分數（基於技能關鍵字重疊）
+    function calculateMatchScore(mission, volunteerProfile) {
+      if (!volunteerProfile) {
+        return 0;
+      }
+
+      // 如果任務選擇"有意願皆可"，則所有志工都匹配
+      if (mission.skills && mission.skills.includes("有意願皆可")) {
+        return 10; // 給予高分，讓這些任務優先顯示
+      }
+
+      if (!volunteerProfile.skills || !mission.skills) {
+        return 0;
+      }
+
+      const volunteerSkills = volunteerProfile.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+      const missionSkills = mission.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+      let score = 0;
+      // 技能匹配
+      volunteerSkills.forEach(vSkill => {
+        if (missionSkills.some(mSkill => mSkill.includes(vSkill) || vSkill.includes(mSkill))) {
+          score += 1; // 簡單重疊計分，可擴展為權重
+        }
+      });
+
+      // 地點匹配（地點關鍵字重疊加分）
+      if (mission.location && volunteerProfile.location) {
+        const missionLoc = mission.location.toLowerCase();
+        const volunteerLoc = volunteerProfile.location.toLowerCase();
+        // 若志工地點為任務地點的子字串或反之，則加分
+        if (missionLoc && volunteerLoc && (missionLoc.includes(volunteerLoc) || volunteerLoc.includes(missionLoc))) {
+          score += 2; // 地點完全或部分匹配給2分
+        } else {
+          // 嘗試以區、縣市等關鍵字模糊比對
+          const locTokens = missionLoc.split(/[\s,，、]+/).filter(Boolean);
+          for (const token of locTokens) {
+            if (volunteerLoc.includes(token)) {
+              score += 1; // 有部分地點關鍵字重疊給1分
+              break;
+            }
+          }
+        }
+      }
+
+      console.log(`Match score for mission ${mission.id}: ${score}`); // 除錯
+      return score;
+    }
+
+    // 獲取推薦任務（基於匹配分數排序）
+    function getRecommendedMissions(volunteerProfile, missions) {
+      return missions
+        .map(m => ({ mission: m, score: calculateMatchScore(m, volunteerProfile) }))
+        .filter(item => item.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3); // 前3個推薦
+    }
+
+    /************************************************************
+     * 3. 權限 & 狀態判斷
+     ************************************************************/
+
+    function canEditMission(mission, userId) {
+      return (
+        mission.postedBy === userId &&
+        mission.status === "open" &&
+        (mission.acceptedCount || 0) < (mission.requiredVolunteers || 0)
+      );
+    }
+
+    function canCloseMission(mission, userId) {
+      return mission.postedBy === userId && mission.status === "open";
+    }
+
+    function canOpenMission(mission, userId) {
+      return mission.postedBy === userId && mission.status === "closed";
+    }
+
+    function canCompleteMission(mission, userId) {
+      // 只有發佈者且狀態為 open 或 closed 才能完成
+      return mission.postedBy === userId && (mission.status === "open" || mission.status === "closed");
+    }
+
+    /************************************************************
+     * 4. 通知 badge
+     ************************************************************/
+
+    function renderNotificationBadge() {
+      const badge = $("notification-badge");
+      if (!badge) return;
+      const notifications = getNotificationsByPublisher(currentUser.id);
+      const unreadCount = notifications.filter((n) => !n.read).length;
+      if (unreadCount > 0) {
+        badge.textContent = unreadCount;
+        badge.className =
+          "ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-semibold rounded-full bg-red-500 text-white";
+      } else {
+        badge.textContent = "";
+        badge.className = "";
+      }
+    }
+
+    /************************************************************
+     * 5. 角色選擇頁
+     ************************************************************/
+
+    function renderRoleSelect() {
+      console.log("Rendering role select page"); // 除錯：記錄渲染
+      const app = $("app");
+      app.innerHTML = `
+        <div class="min-h-screen bg-slate-100 flex items-center justify-center">
+          <div class="w-[390px] bg-white rounded-xl shadow-lg p-8 space-y-6">
+            <h1 class="text-2xl font-bold text-center">災禍應變志工媒合</h1>
+            <p class="text-sm text-gray-600 text-center">
+              選擇一個角色來體驗：
+            </p>
+
+            <div class="space-y-3">
+              <button
+                id="btn-as-publisher"
+                class="w-full px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+              >
+                我要發布任務
+              </button>
+
+              <button
+                id="btn-as-volunteer"
+                class="w-full px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+              >
+                我要當志工
+              </button>
+            </div>
+
+            <div class="border-t pt-4 text-xs text-gray-500 space-y-1">
+              <p>目前角色：<span class="font-medium">${currentUser.name}（${currentUser.role}）</span></p>
+              <p>所有資料皆儲存在瀏覽器 LocalStorage 中（${STORAGE_KEY}）。</p>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // 確保按鈕存在後綁定事件
+      const btnPublisher = $("btn-as-publisher");
+      const btnVolunteer = $("btn-as-volunteer");
+      console.log("Buttons found:", btnPublisher, btnVolunteer); // 除錯：檢查按鈕元素
+
+      if (btnPublisher) {
+        btnPublisher.addEventListener("click", () => {
+          console.log("Publisher button clicked"); // 除錯：記錄點擊
+          renderPublisherNameInput();
+        });
+      }
+
+      if (btnVolunteer) {
+        btnVolunteer.addEventListener("click", () => {
+          console.log("Volunteer button clicked"); // 除錯：記錄點擊
+          currentUser = USERS.volunteer;
+          navigateTo("volunteerProfileForm");
+        });
+      }
+    }
+
+    function renderPublisherNameInput() {
+      // 如果已經有保存的名字，直接進入儀表板
+      const savedName = localStorage.getItem('publisherName');
+      if (savedName) {
+        USERS.publisher.name = savedName;
+        currentUser = USERS.publisher;
+        navigateTo("publisherDashboard");
+        return;
+      }
+
+      console.log("Rendering publisher name input"); // 除錯
+      const app = $("app");
+      app.innerHTML = `
+        <div class="min-h-screen bg-slate-100 flex items-center justify-center">
+          <div class="w-[390px] bg-white rounded-xl shadow-lg p-8 space-y-6">
+            <div class="text-center">
+              <h1 class="text-2xl font-bold">設定您的名稱</h1>
+              <p class="text-sm text-gray-600 mt-2">
+                請輸入您作為任務發布者的名稱
+              </p>
+            </div>
+
+            <form id="publisher-name-form" class="space-y-4">
+              <div>
+                <label for="publisher-name" class="block text-sm font-medium text-gray-700 mb-1">
+                  您的名稱
+                </label>
+                <input
+                  id="publisher-name"
+                  type="text"
+                  placeholder="例如：王小明"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  maxlength="20"
+                  required
+                >
+              </div>
+
+              <div class="flex gap-3">
+                <button
+                  type="button"
+                  id="btn-back-role"
+                  class="flex-1 px-4 py-2 rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300"
+                >
+                  返回
+                </button>
+                <button
+                  type="submit"
+                  class="flex-1 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  確認進入
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+
+      // 綁定事件
+      const form = $("publisher-name-form");
+      const input = $("publisher-name");
+      const btnBack = $("btn-back-role");
+
+      if (btnBack) {
+        btnBack.onclick = () => navigateTo("roleSelect");
+      }
+
+      if (form && input) {
+        form.onsubmit = (e) => {
+          e.preventDefault();
+          const name = input.value.trim();
+          if (!name) {
+            alert("請輸入您的名稱");
+            return;
+          }
+
+          // 更新發布者名字並保存到 localStorage
+          USERS.publisher.name = name;
+          localStorage.setItem('publisherName', name);
+
+          // 設置當前用戶並進入儀表板
+          currentUser = USERS.publisher;
+          navigateTo("publisherDashboard");
+        };
+      }
+    }
+
+    /************************************************************
+     * 6. 志工履歷填寫頁
+     ************************************************************/
+
+    function renderVolunteerProfileForm() {
+      console.log("Rendering volunteer profile form"); // 除錯：記錄渲染
+      const app = $("app");
+      const existingProfile = getProfileById(currentUser.id) || {};
+
+      app.innerHTML = `
+        <div class="min-h-screen bg-slate-100 flex items-center justify-center">
+          <div class="w-[390px] bg-white rounded-xl shadow-lg p-8 space-y-6">
+            <div class="flex items-center justify-between mb-4">
+              <h1 class="text-xl font-bold">志工履歷填寫</h1>
+              <button
+                id="btn-back-role"
+                class="px-3 py-1 text-sm rounded bg-gray-200 hover:bg-gray-300"
+              >
+                ← 回到角色選擇
+              </button>
+            </div>
+
+            <form id="volunteer-profile-form" class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium mb-1">姓名</label>
+                <input
+                  type="text"
+                  name="name"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                  value="${existingProfile.name || ""}"
+                  required
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">聯絡方式</label>
+                <input
+                  type="tel"
+                  name="phone"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                  value="${existingProfile.phone || ""}"
+                  required
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">現在位置</label>
+                <input
+                  type="text"
+                  name="location"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                  value="${existingProfile.location || ""}"
+                  placeholder="例如：台北市大安區"
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">性別</label>
+                <select name="gender" class="w-full border rounded px-3 py-2 text-sm">
+                  <option value="unspecified" ${!existingProfile.gender || existingProfile.gender === 'unspecified' ? 'selected' : ''}>未指定</option>
+                  <option value="male" ${existingProfile.gender === 'male' ? 'selected' : ''}>男性</option>
+                  <option value="female" ${existingProfile.gender === 'female' ? 'selected' : ''}>女性</option>
+                  <option value="other" ${existingProfile.gender === 'other' ? 'selected' : ''}>其他／不透露</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">技能 / 專長（勾選適用項目）</label>
+                <div class="grid grid-cols-2 gap-2">
+                  ${["搬運", "急救", "烹飪", "駕駛", "醫療", "分類", "物流", "食物準備"].map(skill => {
+                    const currentSkills = (existingProfile.skills || "").split(/[、,\s]+/).filter(s => s.trim());
+                    const isChecked = currentSkills.includes(skill);
+                    return `
+                      <label class="flex items-center">
+                        <input
+                          type="checkbox"
+                          name="skills"
+                          value="${skill}"
+                          class="mr-2"
+                          ${isChecked ? 'checked' : ''}
+                        />
+                        ${skill}
+                      </label>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">可用工具（勾選適用項目）</label>
+                <div class="grid grid-cols-2 gap-2">
+                  ${["鏟子", "手推車", "機車", "貨車", "其他", "無特殊工具"].map(tool => {
+                    const currentTools = (existingProfile.tools || "").split(/[、,\s]+/).filter(s => s.trim());
+                    const isChecked = currentTools.includes(tool);
+                    return `
+                      <label class="flex items-center">
+                        <input
+                          type="checkbox"
+                          name="tools"
+                          value="${tool}"
+                          class="mr-2"
+                          ${isChecked ? 'checked' : ''}
+                        />
+                        ${tool}
+                      </label>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">自我介紹</label>
+                <textarea
+                  name="bio"
+                  rows="4"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                  placeholder="簡短介紹自己"
+                >${existingProfile.bio || ""}</textarea>
+              </div>
+
+              <div class="flex gap-3 pt-2">
+                <button
+                  type="submit"
+                  class="px-4 py-2 text-sm rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                >
+                  儲存並進入任務列表
+                </button>
+                <button
+                  type="button"
+                  id="btn-cancel-profile"
+                  class="px-4 py-2 text-sm rounded bg-gray-200 hover:bg-gray-300"
+                >
+                  取消
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+
+      const btnBack = $("btn-back-role");
+      const btnCancel = $("btn-cancel-profile");
+      const form = $("volunteer-profile-form");
+
+      if (btnBack) {
+        btnBack.onclick = () => {
+          console.log("Back button clicked"); // 除錯
+          navigateTo("roleSelect");
+        };
+      }
+
+      if (btnCancel) {
+        btnCancel.onclick = () => {
+          console.log("Cancel button clicked"); // 除錯
+          navigateTo("roleSelect");
+        };
+      }
+
+      if (form) {
+        form.onsubmit = (e) => {
+          console.log("Form submitted"); // 除錯
+          handleVolunteerProfileSubmit(e);
+        };
+      }
+    }
+
+    function handleVolunteerProfileSubmit(event) {
+      event.preventDefault();
+
+      const form = event.target;
+
+      // 處理勾選框的技能與工具，並收集位置與性別
+      const selectedSkills = Array.from(form.skills || [])
+        .filter(checkbox => checkbox.checked)
+        .map(checkbox => checkbox.value);
+      const selectedTools = Array.from(form.tools || [])
+        .filter(checkbox => checkbox.checked)
+        .map(checkbox => checkbox.value);
+
+      const profile = {
+        id: currentUser.id,
+        name: form.name.value.trim(),
+        phone: form.phone.value.trim(),
+        location: form.location.value.trim(),
+        gender: form.gender.value || 'unspecified',
+        skills: selectedSkills.join('、'), // 將勾選的技能用頓號連接
+        tools: selectedTools.join('、'), // 將勾選的工具用頓號連接
+        bio: form.bio.value.trim(),
+        updatedAt: new Date().toISOString()
+      };
+
+      saveProfile(profile);
+
+      // 更新 currentUser 為 profile
+      currentUser = { ...currentUser, ...profile };
+
+      alert("履歷儲存成功！");
+      navigateTo("volunteerMissionList");
+    }
+
+    /************************************************************
+     * 7. 發布者 Dashboard（任務列表 + 統計 + 通知）
+     ************************************************************/
+
+    function calculateStatsForPublisher(missions) {
+      const mine = missions.filter((m) => m.postedBy === currentUser.id);
+      const totalMissions = mine.length;
+      const completedMissions = mine.filter((m) => m.status === "completed").length;
+      const completionRate =
+        totalMissions === 0
+          ? 0
+          : Math.round((completedMissions / totalMissions) * 100);
+      const totalVolunteerParticipations = mine.reduce(
+        (sum, m) => sum + (m.acceptedCount || 0),
+        0
+      );
+
+      return { totalMissions, completedMissions, completionRate, totalVolunteerParticipations };
+    }
+
+    function renderPublisherDashboard() {
+      console.log("Rendering publisher dashboard"); // 除錯
+      const app = $("app");
+      const allMissions = getMissions();
+      const myMissions = allMissions.filter((m) => m.postedBy === currentUser.id);
+      const stats = calculateStatsForPublisher(allMissions);
+      const notifications = getNotificationsByPublisher(currentUser.id);
+      const latestNotis = notifications.slice(0, 3);
+
+      app.innerHTML = `
+        <div class="min-h-screen bg-slate-100 flex items-center justify-center">
+          <div class="w-[390px] bg-white rounded-xl shadow-lg p-8 space-y-6">
+            <header class="bg-white shadow-sm">
+              <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <h1 class="text-xl font-bold">任務發布者後台</h1>
+                  <span class="text-xs text-gray-500">
+                    使用者：${currentUser.name}（${currentUser.id}）</span>
+                </div>
+                <div class="flex items-center gap-4 text-sm">
+                  <button id="btn-notifications" class="relative text-gray-700 hover:text-gray-900">
+                    通知
+                    <span id="notification-badge"></span>
+                  </button>
+                  <button id="btn-go-volunteer" class="text-gray-600 hover:text-gray-900">
+                    切換為志工
+                  </button>
+                  <button id="btn-back-role" class="text-gray-600 hover:text-gray-900">
+                    角色選擇
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            <main class="max-w-6xl mx-auto px-4 py-4 space-y-4">
+              <!-- 統計 -->
+              <section class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div class="bg-white border rounded-lg p-3">
+                  <div class="text-xs text-gray-500 mb-1">歷來任務數</div>
+                  <div class="text-2xl font-semibold">${stats.totalMissions}</div>
+                </div>
+                <div class="bg-white border rounded-lg p-3">
+                  <div class="text-xs text-gray-500 mb-1">完成任務數 / 完成率</div>
+                  <div class="text-lg font-semibold">
+                    ${stats.completedMissions}（${stats.completionRate}%）
+                  </div>
+                </div>
+                <div class="bg-white border rounded-lg p-3">
+                  <div class="text-xs text-gray-500 mb-1">志工人次（acceptedCount 加總）</div>
+                  <div class="text-2xl font-semibold">${stats.totalVolunteerParticipations}</div>
+                </div>
+              </section>
+
+              <!-- 最新通知 -->
+              <section class="bg-white border rounded-lg p-3">
+                <div class="flex items-center justify-between mb-2">
+                  <h2 class="text-sm font-semibold">最新通知</h2>
+                  <span class="text-xs text-gray-500">
+                    共 ${notifications.length} 則（未讀 ${notifications.filter((n) => !n.read).length}）
+                  </span>
+                </div>
+                ${
+                  latestNotis.length === 0
+                    ? `<p class="text-xs text-gray-500">目前尚無通知。</p>`
+                    : `
+                  <ul class="space-y-1 text-sm">
+                    ${latestNotis
+                      .map((n) => {
+                        const readClass = n.read ? "text-gray-500" : "text-gray-900 font-medium";
+                        return `
+                          <li class="${readClass}">
+                            [志工接受任務] ${n.volunteerName || n.volunteerId} 接受了「${n.missionTitle ||
+                          n.missionId}」
+                            <span class="text-xs text-gray-400 ml-1">
+                              ${n.createdAt ? new Date(n.createdAt).toLocaleString() : ""}
+                            </span>
+                          </li>
+                        `;
+                      })
+                      .join("")}
+                  </ul>
+                `
+                }
+              </section>
+
+              <!-- 任務列表 -->
+              <section class="bg-white border rounded-lg p-3">
+                <div class="flex items-center justify-between mb-2">
+                  <h2 class="text-sm font-semibold">我發布的任務</h2>
+                  <div class="flex gap-2">
+                    <button
+                      id="btn-create-mission"
+                      class="px-3 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700"
+                    >
+                      新增任務
+                    </button>
+                    <!-- <button
+                      id="btn-create-demo-mission"
+                      class="px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+                    >
+                      新增示範任務
+                    </button> -->
+                  </div>
+                </div>
+
+                ${
+                  myMissions.length === 0
+                    ? `<p class="text-sm text-gray-500">你尚未發布任何任務，先建立一個示範任務試試。</p>`
+                    : `
+                  <div class="space-y-3">
+                    ${myMissions
+                      .sort((a, b) => {
+                        // 已完成的任務排在最後
+                        if (a.status === "completed" && b.status !== "completed") return 1;
+                        if (a.status !== "completed" && b.status === "completed") return -1;
+                        // 其他任務保持原有順序
+                        return 0;
+                      })
+                      .map((m) => {
+                        const editEnabled = canEditMission(m, currentUser.id);
+                        const closeEnabled = canCloseMission(m, currentUser.id);
+
+                        const statusColor =
+                          m.status === "open"
+                            ? "bg-green-100 text-green-700"
+                            : m.status === "closed"
+                            ? "bg-yellow-100 text-yellow-700"
+                            : "bg-gray-200 text-gray-700";
+
+                        return `
+                          <div class="border rounded-lg p-3 flex flex-col gap-2">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                              <div class="flex items-center gap-2">
+                                <span class="font-semibold">${m.title || "未命名任務"}</span>
+                                <span class="text-xs px-2 py-0.5 rounded-full ${statusColor}">
+                                  ${m.status}
+                                </span>
+                              </div>
+                              <div class="text-xs text-gray-400">
+                                發布時間：${
+                                  m.postedAt ? new Date(m.postedAt).toLocaleString() : "未知"
+                                }
+                              </div>
+                            </div>
+                            <div class="text-sm text-gray-600 flex flex-wrap gap-3">
+                              <span>地點：${m.location || "未填寫"}</span>
+                              <span>緊急程度：${m.urgency || "未設定"}</span>
+                              <span>已接受：${m.acceptedCount || 0} / ${m.requiredVolunteers || 0}</span>
+                            </div>
+                            <div class="text-xs text-gray-500">
+                              所需能力：${m.skills || "未設定"} | 須自備工具：${m.requiredTools || "無"}
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                              <button
+                                class="px-3 py-1 text-xs rounded bg-gray-100 hover:bg-gray-200"
+                                data-action="detail"
+                                data-id="${m.id}"
+                              >
+                                查看詳細＆志工名單
+                              </button>
+
+                              ${
+                                editEnabled
+                                  ? `
+                                    <button
+                                      class="px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+                                      data-action="edit"
+                                      data-id="${m.id}"
+                                    >
+                                      ✏️ 編輯
+                                    </button>
+                                  `
+                                  : `
+                                    <button
+                                      class="px-3 py-1 text-xs rounded bg-gray-300 text-gray-600 cursor-not-allowed"
+                                      disabled
+                                    >
+                                      🔒 無法編輯
+                                    </button>
+                                  `
+                              }
+
+                              ${
+                                closeEnabled
+                                  ? `
+                                    <button
+                                      class="px-3 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-700"
+                                      data-action="close"
+                                      data-id="${m.id}"
+                                    >
+                                      關閉任務
+                                    </button>
+                                  `
+                                  : m.status === "closed" && m.postedBy === currentUser.id
+                                  ? `
+                                    <button
+                                      class="px-3 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700"
+                                      data-action="open"
+                                      data-id="${m.id}"
+                                    >
+                                      開啟任務
+                                    </button>
+                                  `
+                                  : ""
+                              }
+
+                              ${
+                                (m.status === "open" || m.status === "closed") && m.postedBy === currentUser.id
+                                  ? `
+                                    <button
+                                      class="px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+                                      data-action="complete"
+                                      data-id="${m.id}"
+                                    >
+                                      完成任務
+                                    </button>
+                                  `
+                                  : ""
+                              }
+                            </div>
+                          </div>
+                        `;
+                      })
+                      .join("")}
+                  </div>
+                `
+                }
+              </section>
+            </main>
+          </div>
+        </div>
+      `;
+
+      // 綁定事件
+      const btnBack = $("btn-back-role");
+      const btnGoVolunteer = $("btn-go-volunteer");
+      // const btnCreate = $("btn-create-demo-mission");
+      const btnCreateMission = $("btn-create-mission");
+      const btnNotifications = $("btn-notifications");
+
+      if (btnBack) {
+        btnBack.onclick = () => navigateTo("roleSelect");
+      }
+      if (btnGoVolunteer) {
+        btnGoVolunteer.onclick = () => {
+          currentUser = USERS.volunteer;
+          navigateTo("volunteerProfileForm");
+        };
+      }
+      // if (btnCreate) {
+      //   btnCreate.onclick = () => {
+      //     createDemoMissions();
+      //     renderPublisherDashboard();
+      //   };
+      // }
+      if (btnCreateMission) {
+        btnCreateMission.onclick = () => navigateTo("createMissionForm");
+      }
+      if (btnNotifications) {
+        btnNotifications.onclick = () => {
+          markAllNotificationsRead(currentUser.id);
+          renderPublisherDashboard();
+        };
+      }
+
+      // 卡片上的按鈕事件
+      const container = app;
+      const buttons = container.querySelectorAll("[data-action]");
+      buttons.forEach((btn) => {
+        const action = btn.getAttribute("data-action");
+        const id = btn.getAttribute("data-id");
+        btn.addEventListener("click", () => {
+          const mission = getMissionById(id);
+          if (!mission) return;
+
+          if (action === "detail") {
+            navigateTo("publisherMissionDetail", { mission });
+          } else if (action === "edit") {
+            if (!canEditMission(mission, currentUser.id)) {
+              alert("任務狀態已變更或已額滿，無法編輯");
+              renderPublisherDashboard();
+              return;
+            }
+            navigateTo("editMissionForm", { mission });
+          } else if (action === "close") {
+            if (!canCloseMission(mission, currentUser.id)) {
+              alert("任務狀態已變更，無法關閉");
+              renderPublisherDashboard();
+              return;
+            }
+            if (!confirm("確定要關閉此任務？關閉後志工端不可再接此任務。")) return;
+            updateMission(mission.id, { status: "closed" });
+            renderPublisherDashboard();
+          } else if (action === "open") {
+            if (!canOpenMission(mission, currentUser.id)) {
+              alert("任務狀態已變更，無法開啟");
+              renderPublisherDashboard();
+              return;
+            }
+            if (!confirm("確定要重新開啟此任務嗎？")) return;
+            updateMission(mission.id, { status: "open" });
+            renderPublisherDashboard();
+          } else if (action === "complete") {
+            if (!canCompleteMission(mission, currentUser.id)) {
+              alert("任務狀態已變更，無法完成");
+              renderPublisherDashboard();
+              return;
+            }
+            if (!confirm("確定要將此任務標記為已完成？")) return;
+            updateMission(mission.id, { status: "completed" });
+            renderPublisherDashboard();
+          }
+        });
+      });
+
+      renderNotificationBadge();
+    }
+
+    /************************************************************
+     * 8. 任務詳細頁（含志工名單）
+     ************************************************************/
+
+    function renderPublisherMissionDetail(mission) {
+      console.log("Rendering publisher mission detail"); // 除錯
+      const app = $("app");
+      const volunteers = getAcceptsByMission(mission.id);
+
+      app.innerHTML = `
+        <div class="min-h-screen bg-slate-100 flex items-center justify-center">
+          <div class="w-[390px] bg-white rounded-xl shadow-lg p-8 space-y-6">
+            <div class="flex items-center justify-between">
+              <h1 class="text-xl font-bold">任務詳細資訊</h1>
+              <button
+                id="btn-back-dashboard"
+                class="px-3 py-1 text-sm rounded bg-gray-200 hover:bg-gray-300"
+              >
+                ← 回到任務列表
+              </button>
+            </div>
+
+            <section class="bg-white border rounded-lg p-4 space-y-2">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-lg font-semibold">${mission.title || "未命名任務"}</span>
+                  <span class="text-xs px-2 py-0.5 rounded-full ${
+                    mission.status === "open"
+                      ? "bg-green-100 text-green-700"
+                      : mission.status === "closed"
+                      ? "bg-yellow-100 text-yellow-700"
+                      : "bg-gray-200 text-gray-700"
+                  }">
+                    ${mission.status === "open" ? "開放中" : mission.status === "closed" ? "已關閉" : mission.status}
+                  </span>
+                </div>
+                <div class="flex gap-2">
+                  ${
+                    canCloseMission(mission, currentUser.id)
+                      ? `<button
+                          class="px-3 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-700"
+                          onclick="handleMissionStatusChange('${mission.id}', 'close')"
+                        >
+                          關閉任務
+                        </button>`
+                      : ""
+                  }
+                  ${
+                    canOpenMission(mission, currentUser.id)
+                      ? `<button
+                          class="px-3 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700"
+                          onclick="handleMissionStatusChange('${mission.id}', 'open')"
+                        >
+                          開啟任務
+                        </button>`
+                      : ""
+                  }
+                  ${
+                    canCompleteMission(mission, currentUser.id)
+                      ? `<button
+                          class="px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+                          onclick="handleMissionStatusChange('${mission.id}', 'completed')"
+                        >
+                          完成任務
+                        </button>`
+                      : ""
+                  }
+                  <button
+                    class="px-3 py-1 text-xs rounded bg-purple-600 text-white hover:bg-purple-700"
+                    onclick="navigateTo('missionChat', { mission: ${JSON.stringify(mission).replace(/"/g, '&quot;')} })"
+                  >
+                    💬 聊天室
+                  </button>
+                </div>
+              </div>
+              <div class="text-sm text-gray-600">
+                <div>👤 發布者：${getUserNameById(mission.postedBy)}</div>
+                <div>地點：${mission.location || "未填寫"}</div>
+                <div>緊急程度：${mission.urgency || "未設定"}</div>
+                <div>已接受：${mission.acceptedCount || 0} / ${mission.requiredVolunteers || 0}</div>
+                <div>發布時間：${
+                  mission.postedAt ? new Date(mission.postedAt).toLocaleString() : "未知"
+                }</div>
+              </div>
+              ${
+                mission.location && mission.location !== "未填寫"
+                  ? `<div class="mt-4">
+                      <div class="text-sm font-medium text-gray-700 mb-2">📍 地點地圖</div>
+                      ${generateMapHtml(mission.location, "300")}
+                    </div>`
+                  : ""
+              }
+              <div class="text-sm text-gray-700">
+                <div class="font-medium">任務描述：</div>
+                <p>${mission.description || "—"}</p>
+              </div>
+              <div class="text-sm text-gray-700">
+                <div class="font-medium">所需能力：</div>
+                <p>${mission.skills || "未設定"}</p>
+              </div>
+              <div class="text-sm text-gray-700">
+                <div class="font-medium">須自備工具：</div>
+                <p>${mission.requiredTools || "無"}</p>
+              </div>
+            </section>
+
+            <section class="bg-white border rounded-lg p-4">
+              <div class="flex items-center justify-between mb-2">
+                <h2 class="text-sm font-semibold">已接受志工名單</h2>
+                <span class="text-xs text-gray-500">
+                  共 ${volunteers.length} 人
+                </span>
+              </div>
+
+              ${
+                volunteers.length === 0
+                  ? `<p class="text-sm text-gray-500">目前尚無志工接受此任務。</p>`
+                  : `
+                <div class="space-y-2">
+                  ${volunteers
+                    .map(
+                      (v) => {
+                        const volunteerProfile = getProfileById(v.volunteerId);
+                        return `
+                    <div class="border rounded px-3 py-2 text-sm">
+                      <div class="flex flex-col space-y-1">
+                        <div class="flex items-center justify-between">
+                          <div class="font-medium">${v.volunteerName || v.volunteerId}</div>
+                          <div class="text-xs text-gray-600">
+                            志工 ID：${v.volunteerId}
+                          </div>
+                        </div>
+                        <div class="text-xs text-gray-500">
+                          接受時間：${
+                            v.acceptedAt ? new Date(v.acceptedAt).toLocaleString() : "未知"
+                          }
+                        </div>
+                        <div class="text-xs text-gray-700">
+                          <div class="font-medium">聯絡方式：</div>
+                          <div>📱 ${volunteerProfile?.phone || "未提供"}</div>
+                          <div>📍 ${volunteerProfile?.location || "未提供"}</div>
+                        </div>
+                        ${volunteerProfile?.bio ? `
+                        <div class="text-xs text-gray-600 mt-1">
+                          <div class="font-medium">自我介紹：</div>
+                          <p class="text-xs">${volunteerProfile.bio}</p>
+                        </div>
+                        ` : ''}
+                        <div class="flex justify-end mt-2">
+                          <button
+                            class="px-2 py-1 text-xs rounded bg-red-500 text-white hover:bg-red-600"
+                            onclick="removeVolunteerFromMission('${mission.id}', '${v.volunteerId}')"
+                          >
+                            移除志工
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                      }
+                    )
+                    .join("")}
+                </div>
+              `
+              }
+            </section>
+          </div>
+        </div>
+      `;
+
+      const btnBack = $("btn-back-dashboard");
+      if (btnBack) {
+        btnBack.onclick = () => navigateTo("publisherDashboard");
+      }
+    }
+
+    /************************************************************
+     * 9. 新增任務頁
+     ************************************************************/
+
+    function renderCreateMissionForm() {
+      console.log("Rendering create mission form"); // 除錯
+      const app = $("app");
+      app.innerHTML = `
+        <div class="min-h-screen bg-slate-100 flex items-center justify-center">
+          <div class="w-[390px] bg-white rounded-xl shadow-lg p-8 space-y-6">
+            <div class="flex items-center justify-between mb-4">
+              <h1 class="text-xl font-bold">新增任務</h1>
+              <button
+                id="btn-back-dashboard"
+                class="px-3 py-1 text-sm rounded bg-gray-200 hover:bg-gray-300"
+              >
+                ← 回到任務列表
+              </button>
+            </div>
+
+            <form id="create-mission-form" class="bg-white border rounded-lg p-4 space-y-4">
+              <div>
+                <label class="block text-sm font-medium mb-1">任務名稱</label>
+                <input
+                  type="text"
+                  name="title"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                  required
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">聯絡電話</label>
+                <input
+                  type="tel"
+                  name="contactPhone"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">任務描述</label>
+                <textarea
+                  name="description"
+                  rows="4"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                ></textarea>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">任務地點</label>
+                <input
+                  type="text"
+                  name="location"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                  placeholder="例如：台北市大安區災害應變中心"
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">緊急程度</label>
+                <select
+                  name="urgency"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                >
+                  <option value="low">低</option>
+                  <option value="medium" selected>中</option>
+                  <option value="high">高</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">
+                  所需能力
+                  <span class="text-xs text-gray-500">
+                    （勾選任務所需的技能，用於自動匹配志工）
+                  </span>
+                </label>
+                <div class="grid grid-cols-2 gap-2">
+                  <label class="flex items-center">
+                    <input
+                      type="checkbox"
+                      name="skills"
+                      value="有意願皆可"
+                      class="mr-2"
+                    />
+                    有意願皆可
+                  </label>
+                  ${["搬運", "水電", "烹飪", "駕駛", "醫療", "照護", "勘查", "文書"].map(skill => `
+                    <label class="flex items-center">
+                      <input
+                        type="checkbox"
+                        name="skills"
+                        value="${skill}"
+                        class="mr-2"
+                      />
+                      ${skill}
+                    </label>
+                  `).join('')}
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">需求人數</label>
+                <input
+                  type="number"
+                  name="requiredVolunteers"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                  min="1"
+                  value="1"
+                  required
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">
+                  須自備工具
+                  <span class="text-xs text-gray-500">
+                    （勾選任務所需的工具，志工需自行準備）
+                  </span>
+                </label>
+                <div class="grid grid-cols-2 gap-2">
+                  ${["鏟子", "手推車", "機車", "貨車", "其他", "無特殊工具"].map(tool => `
+                    <label class="flex items-center">
+                      <input
+                        type="checkbox"
+                        name="requiredTools"
+                        value="${tool}"
+                        class="mr-2"
+                      />
+                      ${tool}
+                    </label>
+                  `).join('')}
+                </div>
+              </div>
+
+              <div class="flex gap-3 pt-2">
+                <button
+                  type="submit"
+                  class="px-4 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  新增任務
+                </button>
+                <button
+                  type="button"
+                  id="btn-cancel-create"
+                  class="px-4 py-2 text-sm rounded bg-gray-200 hover:bg-gray-300"
+                >
+                  取消
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+
+      const btnBack = $("btn-back-dashboard");
+      const btnCancel = $("btn-cancel-create");
+      const form = $("create-mission-form");
+
+      if (btnBack) {
+        btnBack.onclick = () => navigateTo("publisherDashboard");
+      }
+      if (btnCancel) {
+        btnCancel.onclick = () => navigateTo("publisherDashboard");
+      }
+      if (form) {
+        form.onsubmit = (e) => handleCreateMissionSubmit(e);
+      }
+    }
+
+    function handleCreateMissionSubmit(event) {
+      event.preventDefault();
+
+      const form = event.target;
+      // 處理勾選框的技能
+      const selectedSkills = Array.from(form.skills || [])
+        .filter(checkbox => checkbox.checked)
+        .map(checkbox => checkbox.value);
+      // 處理勾選框的所需工具
+      const selectedRequiredTools = Array.from(form.requiredTools || [])
+        .filter(checkbox => checkbox.checked)
+        .map(checkbox => checkbox.value);
+
+      const mission = {
+        id: genId("mission"),
+        title: form.title.value.trim(),
+        description: form.description.value.trim(),
+        location: form.location.value.trim(),
+        urgency: form.urgency.value,
+        skills: selectedSkills.join('、'), // 將勾選的技能用頓號連接
+        requiredTools: selectedRequiredTools.join('、'), // 將勾選的工具用頓號連接
+        requiredVolunteers: Number(form.requiredVolunteers.value.trim()),
+        acceptedCount: 0,
+        postedBy: currentUser.id,
+        postedAt: new Date().toISOString(),
+        status: "open",
+        contactPhone: form.contactPhone.value.trim()
+      };
+
+      addMission(mission);
+      alert("任務新增成功！");
+      navigateTo("publisherDashboard");
+    }
+
+    /************************************************************
+     * 10. 編輯任務頁
+     ************************************************************/
+
+    function renderEditMissionForm(mission) {
+      console.log("Rendering edit mission form"); // 除錯
+      const app = $("app");
+      app.innerHTML = `
+        <div class="min-h-screen bg-slate-100 flex items-center justify-center">
+          <div class="w-[390px] bg-white rounded-xl shadow-lg p-8 space-y-6">
+            <div class="flex items-center justify-between mb-4">
+              <h1 class="text-xl font-bold">編輯任務</h1>
+              <button
+                id="btn-back-dashboard"
+                class="px-3 py-1 text-sm rounded bg-gray-200 hover:bg-gray-300"
+              >
+                ← 回到任務列表
+              </button>
+            </div>
+
+            <form id="edit-mission-form" class="bg-white border rounded-lg p-4 space-y-4">
+              <div>
+                <label class="block text-sm font-medium mb-1">任務名稱</label>
+                <input
+                  type="text"
+                  name="title"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                  value="${mission.title || ""}"
+                  required
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">聯絡電話</label>
+                <input
+                  type="tel"
+                  name="contactPhone"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                  value="${mission.contactPhone || ""}"
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">任務描述</label>
+                <textarea
+                  name="description"
+                  rows="4"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                >${mission.description || ""}</textarea>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">任務地點</label>
+                <input
+                  type="text"
+                  name="location"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                  value="${mission.location || ""}"
+                  placeholder="例如：台北市大安區災害應變中心"
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">緊急程度</label>
+                <select
+                  name="urgency"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                >
+                  <option value="low" ${mission.urgency === "low" ? "selected" : ""}>低</option>
+                  <option value="medium" ${!mission.urgency || mission.urgency === "medium" ? "selected" : ""}>中</option>
+                  <option value="high" ${mission.urgency === "high" ? "selected" : ""}>高</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">
+                  所需能力 / 工具
+                  <span class="text-xs text-gray-500">
+                    （勾選任務所需的技能，用於自動匹配志工）
+                  </span>
+                </label>
+                <div class="grid grid-cols-2 gap-2">
+                  <label class="flex items-center">
+                    <input
+                      type="checkbox"
+                      name="skills"
+                      value="有意願皆可"
+                      class="mr-2"
+                      ${((mission.skills || "").split(/[、,\s]+/).filter(s => s.trim()).includes("有意願皆可")) ? 'checked' : ''}
+                    />
+                    有意願皆可
+                  </label>
+                  ${["搬運", "水電", "烹飪", "駕駛", "醫療", "照護", "勘查", "文書"].map(skill => {
+                    const currentSkills = (mission.skills || "").split(/[、,\s]+/).filter(s => s.trim());
+                    const isChecked = currentSkills.includes(skill);
+                    return `
+                      <label class="flex items-center">
+                        <input
+                          type="checkbox"
+                          name="skills"
+                          value="${skill}"
+                          class="mr-2"
+                          ${isChecked ? 'checked' : ''}
+                        />
+                        ${skill}
+                      </label>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">
+                  需求人數
+                  <span class="text-xs text-gray-500">
+                    （不可小於已接受人數：${mission.acceptedCount || 0}）
+                  </span>
+                </label>
+                <input
+                  type="number"
+                  name="requiredVolunteers"
+                  class="w-full border rounded px-3 py-2 text-sm"
+                  min="${mission.acceptedCount || 0}"
+                  value="${mission.requiredVolunteers || 0}"
+                  required
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium mb-1">
+                  須自備工具
+                  <span class="text-xs text-gray-500">
+                    （勾選任務所需的工具，志工需自行準備）
+                  </span>
+                </label>
+                <div class="grid grid-cols-2 gap-2">
+                  ${["鏟子", "手推車", "機車", "貨車", "其他", "無特殊工具"].map(tool => {
+                    const currentTools = (mission.requiredTools || "").split(/[、,\s]+/).filter(s => s.trim());
+                    const isChecked = currentTools.includes(tool);
+                    return `
+                      <label class="flex items-center">
+                        <input
+                          type="checkbox"
+                          name="requiredTools"
+                          value="${tool}"
+                          class="mr-2"
+                          ${isChecked ? 'checked' : ''}
+                        />
+                        ${tool}
+                      </label>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-gray-600 bg-gray-50 border rounded p-3">
+                <div>
+                  <div class="font-medium">發布者</div>
+                  <div>${mission.postedBy}</div>
+                </div>
+                <div>
+                  <div class="font-medium">已接受人數</div>
+                  <div>${mission.acceptedCount || 0}</div>
+                </div>
+                <div>
+                  <div class="font-medium">發布時間</div>
+                  <div>${mission.postedAt ? new Date(mission.postedAt).toLocaleString() : "未知"}</div>
+                </div>
+                <div>
+                  <div class="font-medium">目前狀態</div>
+                  <div>${mission.status}</div>
+                </div>
+              </div>
+
+              <div class="flex gap-3 pt-2">
+                <button
+                  type="submit"
+                  class="px-4 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  儲存修改
+                </button>
+                <button
+                  type="button"
+                  id="btn-cancel-edit"
+                  class="px-4 py-2 text-sm rounded bg-gray-200 hover:bg-gray-300"
+                >
+                  取消
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+
+      const btnBack = $("btn-back-dashboard");
+      const btnCancel = $("btn-cancel-edit");
+      const form = $("edit-mission-form");
+
+      if (btnBack) {
+        btnBack.onclick = () => navigateTo("publisherDashboard");
+      }
+      if (btnCancel) {
+        btnCancel.onclick = () => navigateTo("publisherDashboard");
+      }
+      if (form) {
+        form.onsubmit = (e) => handleEditMissionSubmit(e, mission);
+      }
+    }
+
+    function handleEditMissionSubmit(event, mission) {
+      event.preventDefault();
+
+      // 再檢查一次權限
+      if (!canEditMission(mission, currentUser.id)) {
+        alert("任務狀態已變更或已額滿，無法編輯");
+        navigateTo("publisherDashboard");
+        return;
+      }
+
+      const form = event.target;
+      const newRequired = Number(form.requiredVolunteers.value.trim());
+      const acceptedCount = mission.acceptedCount || 0;
+
+      if (newRequired < acceptedCount) {
+        alert("需求人數不可小於已接受人數");
+        return;
+      }
+
+      // 處理勾選框的技能
+      const selectedSkills = Array.from(form.skills || [])
+        .filter(checkbox => checkbox.checked)
+        .map(checkbox => checkbox.value);
+      // 處理勾選框的所需工具
+      const selectedRequiredTools = Array.from(form.requiredTools || [])
+        .filter(checkbox => checkbox.checked)
+        .map(checkbox => checkbox.value);
+
+      const patch = {
+        title: form.title.value.trim(),
+        contactPhone: form.contactPhone.value.trim(),
+        description: form.description.value.trim(),
+        location: form.location.value.trim(),
+        urgency: form.urgency.value,
+        skills: selectedSkills.join('、'), // 將勾選的技能用頓號連接
+        requiredTools: selectedRequiredTools.join('、'), // 將勾選的工具用頓號連接
+        requiredVolunteers: newRequired,
+        updatedAt: new Date().toISOString()
+      };
+
+      updateMission(mission.id, patch);
+      alert("更新成功");
+      navigateTo("publisherDashboard");
+    }
+
+    /************************************************************
+     * 10. 志工端：任務列表 + 接受任務 + 自動匹配
+     ************************************************************/
+
+    function renderVolunteerMissionList() {
+      console.log("Rendering volunteer mission list"); // 除錯
+      const app = $("app");
+      const allMissions = getMissions().filter(
+        (m) =>
+          m.status === "open" &&
+          (m.acceptedCount || 0) < (m.requiredVolunteers || 0)
+      );
+      const profile = getProfileById(currentUser.id);
+      const recommended = profile ? getRecommendedMissions(profile, allMissions) : [];
+      const sortedMissions = allMissions.sort((a, b) => {
+        const scoreA = calculateMatchScore(a, profile);
+        const scoreB = calculateMatchScore(b, profile);
+        return scoreB - scoreA; // 匹配分數高的優先
+      });
+
+      // 獲取志工已接受的任務
+      const acceptedMissions = getMissions().filter(mission => {
+        const accepts = getAcceptsByMission(mission.id);
+        return accepts.some(accept => accept.volunteerId === currentUser.id);
+      });
+
+      // 獲取志工已完成的任務
+      const completedMissions = getMissions().filter(mission => {
+        const accepts = getAcceptsByMission(mission.id);
+        return mission.status === "completed" && accepts.some(accept => accept.volunteerId === currentUser.id);
+      });
+
+      app.innerHTML = `
+        <div class="min-h-screen bg-slate-100 flex items-center justify-center">
+          <div class="w-[390px] bg-white rounded-xl shadow-lg p-8 space-y-6">
+            <header class="bg-white shadow-sm">
+              <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+                <div>
+                  <h1 class="text-xl font-bold">志工任務列表</h1>
+                  <p class="text-xs text-gray-500">
+                    目前身份：${currentUser.name}（${currentUser.id}）
+                  </p>
+                </div>
+                <div class="flex items-center gap-4 text-sm">
+                  <button id="btn-edit-profile" class="text-blue-600 hover:text-blue-900 font-medium">
+                    編輯履歷
+                  </button>
+                  <button id="btn-go-publisher" class="text-gray-600 hover:text-gray-900">
+                    切換為任務發布者
+                  </button>
+                  <button id="btn-back-role" class="text-gray-600 hover:text-gray-900">
+                    角色選擇
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            <main class="max-w-6xl mx-auto px-4 py-4 space-y-4">
+              <!-- 推薦任務區塊 -->
+              ${
+                profile
+                  ? recommended.length > 0
+                    ? `
+                      <section class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                        <div class="flex items-center justify-between mb-2">
+                          <h2 class="text-sm font-semibold text-emerald-700">🎯 推薦任務（基於你的技能）</h2>
+                          <span class="text-xs text-emerald-600">
+                            共 ${recommended.length} 個匹配
+                          </span>
+                        </div>
+                        <div class="space-y-2">
+                          ${recommended
+                            .map(
+                              ({ mission, score }) => `
+                            <div class="border rounded-lg p-2 bg-white">
+                              <div class="font-semibold text-sm">${mission.title || "未命名任務"}</div>
+                              <div class="text-xs text-gray-600">匹配分數：${score} | 地點：${mission.location || "未填寫"} | 緊急程度：${mission.urgency || "未設定"}</div>
+                              <div class="text-xs text-gray-500">所需能力：${mission.skills || "未設定"} | 須自備工具：${mission.requiredTools || "無"}</div>
+                              <button
+                                class="mt-1 px-2 py-1 text-xs rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                                data-action="accept"
+                                data-id="${mission.id}"
+                              >
+                                接受任務
+                              </button>
+                            </div>
+                          `
+                            )
+                            .join("")}
+                        </div>
+                      </section>
+                    `
+                    : `<p class="text-sm text-gray-500">目前沒有推薦任務，請檢查你的履歷技能。</p>`
+                  : `<p class="text-sm text-gray-500">請先填寫履歷以啟用自動匹配功能。</p>`
+              }
+
+              <!-- 已接受的任務 -->
+              <section class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <div class="flex items-center justify-between mb-2">
+                  <h2 class="text-sm font-semibold text-blue-700">📋 我已接受的任務</h2>
+                  <span class="text-xs text-blue-600">
+                    共 ${acceptedMissions.length} 個任務
+                  </span>
+                </div>
+                ${
+                  acceptedMissions.length === 0
+                    ? `<p class="text-sm text-gray-500">你尚未接受任何任務。</p>`
+                    : `
+                    <div class="space-y-2">
+                      ${acceptedMissions
+                        .map((m, index) => {
+                          const accepts = getAcceptsByMission(m.id);
+                          const myAccept = accepts.find(a => a.volunteerId === currentUser.id);
+                          return `
+                          <div class="border rounded-lg p-3 bg-white">
+                            <div class="flex items-center justify-between">
+                              <div class="flex items-center gap-2">
+                                <div class="font-semibold text-sm">${m.title || "未命名任務"}</div>
+                                <span class="text-xs px-2 py-0.5 rounded-full ${
+                                  m.status === "open"
+                                    ? "bg-green-100 text-green-700"
+                                    : m.status === "closed"
+                                    ? "bg-red-100 text-red-700"
+                                    : m.status === "completed"
+                                    ? "bg-blue-100 text-blue-700"
+                                    : "bg-gray-100 text-gray-700"
+                                }">
+                                  ${m.status === "open" ? "開放中" : m.status === "closed" ? "已關閉" : m.status === "completed" ? "已完成" : m.status}
+                                </span>
+                                <span class="text-xs px-2 py-0.5 rounded-full ${
+                                  m.urgency === "high"
+                                    ? "bg-red-100 text-red-700"
+                                    : m.urgency === "medium"
+                                    ? "bg-yellow-100 text-yellow-700"
+                                    : "bg-green-100 text-green-700"
+                                }">
+                                  ${m.urgency === "high" ? "高" : m.urgency === "medium" ? "中" : "低"}
+                                </span>
+                              </div>
+                              <div class="flex gap-2">
+                                <button
+                                  class="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+                                  onclick="toggleMissionDetail('accepted-${index}')"
+                                >
+                                  詳情
+                                </button>
+                                <button
+                                  class="px-2 py-1 text-xs rounded bg-purple-600 text-white hover:bg-purple-700"
+                                  onclick="navigateTo('missionChat', { mission: ${JSON.stringify(m).replace(/"/g, '&quot;')} })"
+                                >
+                                  💬
+                                </button>
+                                ${
+                                  m.status !== "completed"
+                                    ? `<button
+                                        class="px-2 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700"
+                                        onclick="completeMission('${m.id}')"
+                                      >
+                                        完成
+                                      </button>`
+                                    : `<span class="px-2 py-1 text-xs rounded bg-gray-400 text-white">
+                                        已完成
+                                      </span>`
+                                }
+                              </div>
+                            </div>
+                            <div id="accepted-${index}" class="mt-3 pt-3 border-t border-gray-200" style="display:none;">
+                              <div class="text-sm text-gray-600 space-y-1">
+                                <div>� 發布者：${getUserNameById(m.postedBy)}</div>
+                                <div>�📍 地點：${m.location || "未填寫"}</div>
+                                <div>🚨 緊急程度：${m.urgency === "high" ? "高" : m.urgency === "medium" ? "中" : "低"}</div>
+                                <div>👥 需求人數：${m.acceptedCount || 0} / ${m.requiredVolunteers || 0}</div>
+                                <div>📞 聯絡電話：${m.contactPhone || "未提供"}</div>
+                                <div>⏰ 接受時間：${myAccept ? new Date(myAccept.acceptedAt).toLocaleString() : "未知"}</div>
+                                <div>📅 發布時間：${m.postedAt ? new Date(m.postedAt).toLocaleString() : "未知"}</div>
+                              </div>
+                              <div class="text-xs text-gray-700 mt-2">
+                                <div class="font-medium">任務描述：</div>
+                                <p>${m.description || "無描述"}</p>
+                              </div>
+                              ${
+                                m.location && m.location !== "未填寫"
+                                  ? `<div class="mt-3">
+                                      <div class="text-xs font-medium text-gray-700 mb-1">📍 地點地圖</div>
+                                      ${generateMapHtml(m.location, "200")}
+                                    </div>`
+                                  : ""
+                              }
+                            </div>
+                          </div>
+                        `;
+                        })
+                        .join("")}
+                    </div>
+                  `
+                }
+              </section>
+
+              <!-- 已完成的任務 -->
+              <section class="bg-green-50 border border-green-200 rounded-lg p-3">
+                <div class="flex items-center justify-between mb-2">
+                  <h2 class="text-sm font-semibold text-green-700">✅ 我已完成的任務</h2>
+                  <span class="text-xs text-green-600">
+                    共 ${completedMissions.length} 個任務
+                  </span>
+                </div>
+                ${
+                  completedMissions.length === 0
+                    ? `<p class="text-sm text-gray-500">你尚未完成任何任務。</p>`
+                    : `
+                    <div class="space-y-2">
+                      ${completedMissions
+                        .map((m, index) => {
+                          const accepts = getAcceptsByMission(m.id);
+                          const myAccept = accepts.find(a => a.volunteerId === currentUser.id);
+                          return `
+                          <div class="border rounded-lg p-3 bg-white">
+                            <div class="flex items-center justify-between">
+                              <div class="flex items-center gap-2">
+                                <div class="font-semibold text-sm">${m.title || "未命名任務"}</div>
+                                <span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                                  已完成
+                                </span>
+                                <span class="text-xs px-2 py-0.5 rounded-full ${
+                                  m.urgency === "high"
+                                    ? "bg-red-100 text-red-700"
+                                    : m.urgency === "medium"
+                                    ? "bg-yellow-100 text-yellow-700"
+                                    : "bg-green-100 text-green-700"
+                                }">
+                                  ${m.urgency === "high" ? "高" : m.urgency === "medium" ? "中" : "低"}
+                                </span>
+                              </div>
+                              <div class="flex gap-2">
+                                <button
+                                  class="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+                                  onclick="toggleMissionDetail('completed-${index}')"
+                                >
+                                  詳情
+                                </button>
+                                <button
+                                  class="px-2 py-1 text-xs rounded bg-purple-600 text-white hover:bg-purple-700"
+                                  onclick="navigateTo('missionChat', { mission: ${JSON.stringify(m).replace(/"/g, '&quot;')} })"
+                                >
+                                  💬
+                                </button>
+                                <span class="px-2 py-1 text-xs rounded bg-gray-400 text-white">
+                                  已完成
+                                </span>
+                              </div>
+                            </div>
+                            <div id="completed-${index}" class="mt-3 pt-3 border-t border-gray-200" style="display:none;">
+                              <div class="text-sm text-gray-600 space-y-1">
+                                <div>� 發布者：${getUserNameById(m.postedBy)}</div>
+                                <div>�📍 地點：${m.location || "未填寫"}</div>
+                                <div>🚨 緊急程度：${m.urgency === "high" ? "高" : m.urgency === "medium" ? "中" : "低"}</div>
+                                <div>👥 需求人數：${m.acceptedCount || 0} / ${m.requiredVolunteers || 0}</div>
+                                <div>📞 聯絡電話：${m.contactPhone || "未提供"}</div>
+                                <div>⏰ 接受時間：${myAccept ? new Date(myAccept.acceptedAt).toLocaleString() : "未知"}</div>
+                                <div>📅 發布時間：${m.postedAt ? new Date(m.postedAt).toLocaleString() : "未知"}</div>
+                                <div>✅ 完成時間：${m.completedAt ? new Date(m.completedAt).toLocaleString() : "未知"}</div>
+                              </div>
+                              <div class="text-xs text-gray-700 mt-2">
+                                <div class="font-medium">任務描述：</div>
+                                <p>${m.description || "無描述"}</p>
+                              </div>
+                              ${
+                                m.location && m.location !== "未填寫"
+                                  ? `<div class="mt-3">
+                                      <div class="text-xs font-medium text-gray-700 mb-1">📍 地點地圖</div>
+                                      ${generateMapHtml(m.location, "200")}
+                                    </div>`
+                                  : ""
+                              }
+                            </div>
+                          </div>
+                        `;
+                        })
+                        .join("")}
+                    </div>
+                  `
+                }
+              </section>
+
+              <!-- 所有可接受任務 -->
+              <section class="bg-white border rounded-lg p-3">
+                <div class="flex items-center justify-between mb-2">
+                  <h2 class="text-sm font-semibold">可接受的任務</h2>
+                  <p class="text-xs text-gray-500">
+                    已按匹配度排序
+                  </p>
+                </div>
+
+                ${
+                  sortedMissions.length === 0
+                    ? `<p class="text-sm text-gray-500">目前沒有可接受的任務。</p>`
+                    : `
+                  <div class="space-y-3">
+                    ${sortedMissions
+                      .map(
+                        (m) => `
+                      <div class="border rounded-lg p-3 flex flex-col gap-2">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                          <div class="font-semibold">${m.title || "未命名任務"}</div>
+                          <div class="text-xs text-gray-400">
+                            發布者：${getUserNameById(m.postedBy)}
+                          </div>
+                        </div>
+                        <div class="text-sm text-gray-600 flex flex-wrap gap-3">
+                          <span>地點：${m.location || "未填寫"}</span>
+                          <span>緊急程度：${m.urgency || "未設定"}</span>
+                          <span>已接受：${m.acceptedCount || 0} / ${m.requiredVolunteers || 0}</span>
+                        </div>
+                        <div class="text-xs text-gray-700">
+                          ${m.description || "—" }
+                        </div>
+                        <div class="text-xs text-gray-600">
+                          <div>所需能力：${m.skills || "未設定"}</div>
+                          <div>須自備工具：${m.requiredTools || "無"}</div>
+                        </div>
+                        <div>
+                          <button
+                            class="px-3 py-1 text-xs rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                            data-action="accept"
+                            data-id="${m.id}"
+                          >
+                            接受任務
+                          </button>
+                        </div>
+                      </div>
+                    `
+                      )
+                      .join("")}
+                  </div>
+                `
+                }
+              </section>
+            </main>
+          </div>
+        </div>
+      `;
+
+      const btnBack = $("btn-back-role");
+      const btnGoPublisher = $("btn-go-publisher");
+      const btnEditProfile = $("btn-edit-profile");
+
+      if (btnBack) {
+        btnBack.onclick = () => navigateTo("roleSelect");
+      }
+      if (btnGoPublisher) {
+        btnGoPublisher.onclick = () => {
+          currentUser = USERS.publisher;
+          navigateTo("publisherDashboard");
+        };
+      }
+      if (btnEditProfile) {
+        btnEditProfile.onclick = () => navigateTo("volunteerProfileForm");
+      }
+
+      const container = app;
+      const buttons = container.querySelectorAll("[data-action='accept']");
+      buttons.forEach((btn) => {
+        const id = btn.getAttribute("data-id");
+        btn.addEventListener("click", () => {
+          const mission = getMissionById(id);
+          if (!mission) return;
+          handleVolunteerAcceptMission(mission);
+        });
+      });
+    }
+
+    function renderMissionChat(mission) {
+      console.log("Rendering mission chat"); // 除錯
+      const app = $("app");
+      const messages = getChatMessagesByMission(mission.id);
+
+      app.innerHTML = `
+        <div class="min-h-screen bg-slate-100 flex items-center justify-center">
+          <div class="w-[390px] bg-white rounded-xl shadow-lg flex flex-col" style="height: 600px;">
+            <!-- 聊天室標題 -->
+            <div class="flex items-center justify-between p-4 border-b">
+              <div class="flex items-center gap-2">
+                <button
+                  id="btn-back-chat"
+                  class="text-gray-600 hover:text-gray-900"
+                >
+                  ←
+                </button>
+                <div>
+                  <h1 class="text-lg font-bold">💬 ${mission.title || "任務聊天室"}</h1>
+                  <p class="text-xs text-gray-500">發布者：${getUserNameById(mission.postedBy)} • ${messages.length} 則訊息</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 訊息列表 -->
+            <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3">
+              ${
+                messages.length === 0
+                  ? `<div class="text-center text-gray-500 text-sm py-8">
+                      還沒有訊息，開始聊天吧！
+                    </div>`
+                  : messages.map(msg => `
+                    <div class="flex ${msg.senderId === currentUser.id ? 'justify-end' : 'justify-start'}">
+                      <div class="max-w-[70%] ${msg.senderId === currentUser.id ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-900'} rounded-lg px-3 py-2">
+                        <div class="text-xs font-medium mb-1 ${msg.senderId === currentUser.id ? 'text-blue-100' : 'text-gray-600'}">
+                          ${msg.senderName}
+                        </div>
+                        <div class="text-sm">${msg.content}</div>
+                        <div class="text-xs ${msg.senderId === currentUser.id ? 'text-blue-200' : 'text-gray-500'} mt-1">
+                          ${new Date(msg.createdAt).toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </div>
+                  `).join('')
+              }
+            </div>
+
+            <!-- 發送訊息區域 -->
+            <div class="border-t p-4">
+              <div class="flex gap-2">
+                <input
+                  id="chat-input"
+                  type="text"
+                  placeholder="輸入訊息..."
+                  class="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  maxlength="500"
+                >
+                <button
+                  id="btn-send-message"
+                  class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
+                >
+                  發送
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // 綁定事件
+      const btnBack = $("btn-back-chat");
+      const btnSend = $("btn-send-message");
+      const input = $("chat-input");
+
+      if (btnBack) {
+        btnBack.onclick = () => {
+          if (currentUser.role === "publisher") {
+            navigateTo("publisherDashboard");
+          } else {
+            navigateTo("volunteerMissionList");
+          }
+        };
+      }
+
+      if (btnSend && input) {
+        const sendMessage = () => {
+          const content = input.value.trim();
+          if (!content) return;
+
+          const message = {
+            id: genId("msg"),
+            missionId: mission.id,
+            senderId: currentUser.id,
+            senderName: currentUser.name,
+            content: content,
+            createdAt: new Date().toISOString()
+          };
+
+          addChatMessage(message);
+          input.value = "";
+          renderMissionChat(mission); // 重新渲染以顯示新訊息
+        };
+
+        btnSend.onclick = sendMessage;
+        input.onkeypress = (e) => {
+          if (e.key === "Enter") {
+            sendMessage();
+          }
+        };
+      }
+
+      // 滾動到最新訊息
+      setTimeout(() => {
+        const messagesContainer = $("chat-messages");
+        if (messagesContainer) {
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+      }, 100);
+    }
+
+    function handleVolunteerAcceptMission(mission) {
+      // 檢查任務狀態
+      if (mission.status !== "open") {
+        alert("此任務已關閉，無法接受");
+        renderVolunteerMissionList();
+        return;
+      }
+
+      // 檢查是否已額滿
+      const currentAccepts = getAcceptsByMission(mission.id);
+      if (currentAccepts.length >= (mission.requiredVolunteers || 0)) {
+        alert("此任務已額滿");
+        renderVolunteerMissionList();
+        return;
+      }
+
+      // 檢查是否已經接受過
+      const alreadyAccepted = currentAccepts.some(accept => accept.volunteerId === currentUser.id);
+      if (alreadyAccepted) {
+        alert("你已經接受過此任務了");
+        renderVolunteerMissionList();
+        return;
+      }
+
+      // 創建接受記錄
+      const acceptRecord = {
+        id: genId("accept"),
+        missionId: mission.id,
+        volunteerId: currentUser.id,
+        volunteerName: currentUser.name,
+        acceptedAt: new Date().toISOString()
+      };
+
+      addAccept(acceptRecord);
+
+      // 更新任務的已接受人數
+      updateMission(mission.id, {
+        acceptedCount: currentAccepts.length + 1
+      });
+
+      alert("成功接受任務！");
+      renderVolunteerMissionList();
+    }
+
+    function removeVolunteerFromMission(missionId, volunteerId) {
+      // 確認操作
+      if (!confirm("確定要將此志工從任務中移除嗎？")) return;
+
+      const db = loadDB();
+      const mission = getMissionById(missionId);
+      if (!mission) {
+        alert("任務不存在");
+        return;
+      }
+
+      // 檢查權限（只有任務發布者才能移除志工）
+      if (mission.postedBy !== currentUser.id) {
+        alert("您沒有權限執行此操作");
+        return;
+      }
+
+      // 找到並刪除接受記錄
+      const acceptIndex = db.accepts.findIndex(
+        accept => accept.missionId === missionId && accept.volunteerId === volunteerId
+      );
+
+      if (acceptIndex === -1) {
+        alert("未找到該志工的接受記錄");
+        return;
+      }
+
+      // 刪除接受記錄
+      db.accepts.splice(acceptIndex, 1);
+
+      // 更新任務的已接受人數
+      const remainingAccepts = db.accepts.filter(accept => accept.missionId === missionId);
+      updateMission(missionId, {
+        acceptedCount: remainingAccepts.length
+      });
+
+      // 保存數據庫
+      saveDB(db);
+
+      alert("已成功移除志工！");
+      renderPublisherMissionDetail(mission);
+    }
+
+    function completeMission(missionId) {
+      // 確認操作
+      if (!confirm("確定要將此任務標記為已完成嗎？")) return;
+
+      const mission = getMissionById(missionId);
+      if (!mission) {
+        alert("任務不存在");
+        return;
+      }
+
+      // 檢查志工是否接受了此任務
+      const accepts = getAcceptsByMission(missionId);
+      const myAccept = accepts.find(accept => accept.volunteerId === currentUser.id);
+      if (!myAccept) {
+        alert("您尚未接受此任務");
+        return;
+      }
+
+      // 將任務標記為已完成
+      updateMission(missionId, { 
+        status: "completed",
+        completedAt: new Date().toISOString()
+      });
+
+      alert("任務已標記為已完成！");
+      renderVolunteerMissionList();
+    }
+  </script>
+
+  <body>
+    <div id="app"></div>
+    <script>
+      // 頁面載入完成後初始化
+      document.addEventListener('DOMContentLoaded', function() {
+        console.log('Page loaded, initializing app...');
+        navigateTo('roleSelect');
+      });
+    </script>
+  </body>
+</html>
