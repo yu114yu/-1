@@ -777,8 +777,7 @@
                         const readClass = n.read ? "text-gray-500" : "text-gray-900 font-medium";
                         return `
                           <li class="${readClass}">
-                            [志工接受任務] ${n.volunteerName || n.volunteerId} 接受了「${n.missionTitle ||
-                          n.missionId}」
+                            [志工接受任務] 有新志工接收了您的任務
                             <span class="text-xs text-gray-400 ml-1">
                               ${n.createdAt ? new Date(n.createdAt).toLocaleString() : ""}
                             </span>
@@ -2188,6 +2187,19 @@
       // 更新任務的已接受人數
       updateMission(mission.id, {
         acceptedCount: currentAccepts.length + 1
+      });
+
+      // 發送通知給發布者
+      addNotification({
+        id: genId("notification"),
+        publisherId: mission.postedBy,
+        type: "volunteer_accepted",
+        message: "有新志工接收了您的任務",
+        missionId: mission.id,
+        missionTitle: mission.title,
+        volunteerName: currentUser.name,
+        createdAt: new Date().toISOString(),
+        read: false
       });
 
       alert("成功接受任務！");
