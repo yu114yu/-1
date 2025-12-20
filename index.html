@@ -278,32 +278,11 @@
       const volunteerSkills = volunteerProfile.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
       const missionSkills = mission.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
       let score = 0;
-      // 技能匹配
       volunteerSkills.forEach(vSkill => {
         if (missionSkills.some(mSkill => mSkill.includes(vSkill) || vSkill.includes(mSkill))) {
           score += 1; // 簡單重疊計分，可擴展為權重
         }
       });
-
-      // 地點匹配（地點關鍵字重疊加分）
-      if (mission.location && volunteerProfile.location) {
-        const missionLoc = mission.location.toLowerCase();
-        const volunteerLoc = volunteerProfile.location.toLowerCase();
-        // 若志工地點為任務地點的子字串或反之，則加分
-        if (missionLoc && volunteerLoc && (missionLoc.includes(volunteerLoc) || volunteerLoc.includes(missionLoc))) {
-          score += 2; // 地點完全或部分匹配給2分
-        } else {
-          // 嘗試以區、縣市等關鍵字模糊比對
-          const locTokens = missionLoc.split(/[\s,，、]+/).filter(Boolean);
-          for (const token of locTokens) {
-            if (volunteerLoc.includes(token)) {
-              score += 1; // 有部分地點關鍵字重疊給1分
-              break;
-            }
-          }
-        }
-      }
-
       console.log(`Match score for mission ${mission.id}: ${score}`); // 除錯
       return score;
     }
@@ -1703,7 +1682,7 @@
       // 獲取志工已接受的任務
       const acceptedMissions = getMissions().filter(mission => {
         const accepts = getAcceptsByMission(mission.id);
-        return accepts.some(accept => accept.volunteerId === currentUser.id);
+        return accepts.some(accept => accept.volunteerId === currentUser.id) && mission.status !== "completed";
       });
 
       // 獲取志工已完成的任務
@@ -2247,15 +2226,17 @@
 
       // 更新任務的已接受人數
       const remainingAccepts = db.accepts.filter(accept => accept.missionId === missionId);
-      updateMission(missionId, {
-        acceptedCount: remainingAccepts.length
-      });
+      const missionIndex = db.missions.findIndex(m => m.id === missionId);
+      if (missionIndex >= 0) {
+        db.missions[missionIndex].acceptedCount = remainingAccepts.length;
+      }
 
       // 保存數據庫
       saveDB(db);
 
       alert("已成功移除志工！");
-      renderPublisherMissionDetail(mission);
+      const updatedMission = getMissionById(missionId);
+      renderPublisherMissionDetail(updatedMission);
     }
 
     function completeMission(missionId) {
