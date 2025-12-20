@@ -555,7 +555,7 @@
               <div>
                 <label class="block text-sm font-medium mb-1">技能 / 專長（勾選適用項目）</label>
                 <div class="grid grid-cols-2 gap-2">
-                  ${["搬運", "急救", "烹飪", "駕駛", "醫療", "分類", "物流", "食物準備"].map(skill => {
+                  ${["搬運", "水電", "烹飪", "駕駛", "醫療", "照護", "勘查", "文書"].map(skill => {
                     const currentSkills = (existingProfile.skills || "").split(/[、,\s]+/).filter(s => s.trim());
                     const isChecked = currentSkills.includes(skill);
                     return `
