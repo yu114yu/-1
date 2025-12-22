@@ -260,30 +260,56 @@
      * 新增：任務自動匹配系統
      ************************************************************/
 
-    // 計算任務與志工的匹配分數（基於技能關鍵字重疊）
+    // 改良版：計算任務與志工的匹配分數（基於技能、工具、位置與緊急度）
     function calculateMatchScore(mission, volunteerProfile) {
       if (!volunteerProfile) {
         return 0;
       }
 
-      // 如果任務選擇"有意願皆可"，則所有志工都匹配
-      if (mission.skills && mission.skills.includes("有意願皆可")) {
-        return 10; // 給予高分，讓這些任務優先顯示
-      }
-
-      if (!volunteerProfile.skills || !mission.skills) {
-        return 0;
-      }
-
-      const volunteerSkills = volunteerProfile.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
-      const missionSkills = mission.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
       let score = 0;
-      volunteerSkills.forEach(vSkill => {
-        if (missionSkills.some(mSkill => mSkill.includes(vSkill) || vSkill.includes(mSkill))) {
-          score += 1; // 簡單重疊計分，可擴展為權重
+
+      // 1. 技能匹配（權重10分）
+      if (mission.skills && volunteerProfile.skills) {
+        const volunteerSkills = volunteerProfile.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+        const missionSkills = mission.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+        volunteerSkills.forEach(vSkill => {
+          if (missionSkills.some(mSkill => mSkill.includes(vSkill) || vSkill.includes(mSkill))) {
+            score += 10; // 每個匹配技能加10分
+          }
+        });
+      }
+
+      // 2. 工具匹配（權重5分）
+      if (mission.requiredTools && volunteerProfile.tools) {
+        const volunteerTools = volunteerProfile.tools.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+        const missionTools = mission.requiredTools.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+        volunteerTools.forEach(vTool => {
+          if (missionTools.some(mTool => mTool.includes(vTool) || vTool.includes(mTool))) {
+            score += 5; // 每個匹配工具加5分
+          }
+        });
+      }
+
+      // 3. 位置匹配（權重5分）
+      if (mission.location && volunteerProfile.location) {
+        const missionLoc = mission.location.toLowerCase();
+        const volunteerLoc = volunteerProfile.location.toLowerCase();
+        // 簡單檢查是否包含相同地區關鍵字（可擴展為地理距離計算）
+        if (missionLoc.includes(volunteerLoc) || volunteerLoc.includes(missionLoc)) {
+          score += 5;
         }
-      });
-      console.log(`Match score for mission ${mission.id}: ${score}`); // 除錯
+      }
+
+      // 4. 緊急度加成（高優先）
+      if (mission.urgency === 'high') {
+        score += 3;
+      } else if (mission.urgency === 'medium') {
+        score += 2;
+      } else if (mission.urgency === 'low') {
+        score += 1;
+      }
+
+      console.log(`改良匹配分數 for mission ${mission.id}: ${score}`); // 除錯
       return score;
     }
 
@@ -2278,6 +2304,95 @@
       alert("任務已標記為已完成！");
       renderVolunteerMissionList();
     }
+
+    // 新增：在本地資料庫中建立示範任務（僅在尚無任務時執行）
+    function createDemoMissions() {
+      const db = loadDB();
+      if (db.missions && db.missions.length > 0) return; // 已有任務則不重複建立
+
+      const now = new Date().toISOString();
+      const demos = [
+        {
+          title: '救援物資搬運',
+          description: '協助搬運與分發救援物資至臨時收容所',
+          location: '花蓮市',
+          urgency: 'high',
+          skills: '搬運、駕駛',
+          requiredTools: '手推車、貨車',
+          requiredVolunteers: 3,
+          acceptedCount: 0,
+          status: 'open',
+          contactPhone: '0912-345-678',
+        },
+        {
+          title: '臨時醫療協助',
+          description: '支援臨時診療站，需有醫療背景或照護經驗',
+          location: '花蓮縣玉里鎮',
+          urgency: 'high',
+          skills: '醫療、照護',
+          requiredTools: '無特殊工具',
+          requiredVolunteers: 2,
+          acceptedCount: 0,
+          status: 'open',
+          contactPhone: '03-8888-1234',
+        },
+        {
+          title: '道路清理與勘查',
+          description: '協助清理道路與簡易勘查，需能搬運與使用基本工具',
+          location: '花蓮縣吉安鄉',
+          urgency: 'medium',
+          skills: '勘查、搬運',
+          requiredTools: '鏟子、手推車',
+          requiredVolunteers: 4,
+          acceptedCount: 0,
+          status: 'open',
+          contactPhone: '',
+        },
+        {
+          title: '物資整理與文書支援',
+          description: '協助整理物資庫存與記錄文書',
+          location: '花蓮縣壽豐鄉',
+          urgency: 'low',
+          skills: '文書',
+          requiredTools: '無特殊工具',
+          requiredVolunteers: 2,
+          acceptedCount: 0,
+          status: 'open',
+          contactPhone: '',
+        },
+        {
+          title: '廚食準備與發放',
+          description: '在臨時廚房協助簡單烹飪與餐點發放',
+          location: '花蓮縣鳳林鎮',
+          urgency: 'medium',
+          skills: '烹飪',
+          requiredTools: '無特殊工具',
+          requiredVolunteers: 3,
+          acceptedCount: 0,
+          status: 'open',
+          contactPhone: '03-8765-4321',
+        }
+      ];
+
+      demos.forEach((m) => {
+        const mission = {
+          id: genId('mission'),
+          title: m.title,
+          description: m.description,
+          location: m.location,
+          urgency: m.urgency,
+          skills: m.skills,
+          requiredTools: m.requiredTools,
+          requiredVolunteers: m.requiredVolunteers,
+          acceptedCount: m.acceptedCount,
+          postedBy: USERS.publisher.id,
+          postedAt: now,
+          status: m.status,
+          contactPhone: m.contactPhone
+        };
+        addMission(mission);
+      });
+    }
   </script>
 
   <body>
@@ -2286,6 +2401,8 @@
       // 頁面載入完成後初始化
       document.addEventListener('DOMContentLoaded', function() {
         console.log('Page loaded, initializing app...');
+        // 建立示範任務（若資料庫為空）
+        try { createDemoMissions(); } catch (e) { console.warn('createDemoMissions error', e); }
         navigateTo('roleSelect');
       });
     </script>
