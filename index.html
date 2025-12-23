@@ -291,17 +291,29 @@
       // 技能匹配分數（每個匹配技能 10 分）
       score += skillMatches * 10;
 
-      // 工具匹配（僅在有技能匹配時才計分，每個匹配工具 5 分）
-      if (mission.requiredTools && volunteerProfile.tools) {
+      // 工具要求：如果任務明確要求工具（非 '無特殊工具'），則志工必須至少擁有所有被要求的重要工具，否則不推薦
+      if (mission.requiredTools) {
         const missionTools = mission.requiredTools.toLowerCase().split(/[、,，\s]+/).filter(s => s.trim());
-        const volunteerTools = volunteerProfile.tools.toLowerCase().split(/[、,，\s]+/).filter(s => s.trim());
-        let toolMatches = 0;
-        volunteerTools.forEach(vTool => {
-          if (missionTools.some(mTool => mTool.includes(vTool) || vTool.includes(mTool))) {
-            toolMatches += 1;
+        const volunteerTools = (volunteerProfile.tools || '').toLowerCase().split(/[、,，\s]+/).filter(s => s.trim());
+
+        // 如果任務標註為無特殊工具，跳過工具檢查
+        const onlyNoSpecial = missionTools.length === 1 && missionTools[0].includes('無特殊工具');
+        if (!onlyNoSpecial) {
+          // 檢查是否每項任務要求工具，都能被志工至少部分匹配
+          const allToolsSatisfied = missionTools.every(mTool =>
+            volunteerTools.some(vTool => mTool.includes(vTool) || vTool.includes(mTool))
+          );
+          if (!allToolsSatisfied) {
+            return 0; // 未滿足工具要求，不推薦
           }
-        });
-        score += toolMatches * 5;
+
+          // 所有工具要求滿足，額外加分（每個匹配工具 5 分）
+          let toolMatches = 0;
+          missionTools.forEach(mTool => {
+            if (volunteerTools.some(vTool => mTool.includes(vTool) || vTool.includes(mTool))) toolMatches += 1;
+          });
+          score += toolMatches * 5;
+        }
       }
 
       // 位置匹配（僅在有技能匹配時才計分，符合則 +5）
