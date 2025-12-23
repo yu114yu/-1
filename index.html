@@ -267,7 +267,7 @@
       }
 
       let score = 0;
-      let hasMatch = false;
+      let hasAbilityMatch = false; // 只有技能或工具匹配才算有能力匹配
 
       // 1. 技能匹配（權重10分）
       if (mission.skills && volunteerProfile.skills) {
@@ -276,7 +276,7 @@
         volunteerSkills.forEach(vSkill => {
           if (missionSkills.some(mSkill => mSkill.includes(vSkill) || vSkill.includes(mSkill))) {
             score += 10; // 每個匹配技能加10分
-            hasMatch = true;
+            hasAbilityMatch = true;
           }
         });
       }
@@ -288,24 +288,23 @@
         volunteerTools.forEach(vTool => {
           if (missionTools.some(mTool => mTool.includes(vTool) || vTool.includes(mTool))) {
             score += 5; // 每個匹配工具加5分
-            hasMatch = true;
+            hasAbilityMatch = true;
           }
         });
       }
 
-      // 3. 位置匹配（權重5分）
-      if (mission.location && volunteerProfile.location) {
+      // 3. 位置匹配（權重5分，只有在有能力匹配時才加分）
+      if (hasAbilityMatch && mission.location && volunteerProfile.location) {
         const missionLoc = mission.location.toLowerCase();
         const volunteerLoc = volunteerProfile.location.toLowerCase();
         // 簡單檢查是否包含相同地區關鍵字（可擴展為地理距離計算）
         if (missionLoc.includes(volunteerLoc) || volunteerLoc.includes(missionLoc)) {
           score += 5;
-          hasMatch = true;
         }
       }
 
-      // 4. 緊急度加成（只有在有匹配時才加成）
-      if (hasMatch) {
+      // 4. 緊急度加成（只有在有能力匹配時才加成）
+      if (hasAbilityMatch) {
         if (mission.urgency === 'high') {
           score += 3;
         } else if (mission.urgency === 'medium') {
