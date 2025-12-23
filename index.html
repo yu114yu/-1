@@ -267,6 +267,7 @@
       }
 
       let score = 0;
+      let hasMatch = false;
 
       // 1. 技能匹配（權重10分）
       if (mission.skills && volunteerProfile.skills) {
@@ -275,6 +276,7 @@
         volunteerSkills.forEach(vSkill => {
           if (missionSkills.some(mSkill => mSkill.includes(vSkill) || vSkill.includes(mSkill))) {
             score += 10; // 每個匹配技能加10分
+            hasMatch = true;
           }
         });
       }
@@ -286,6 +288,7 @@
         volunteerTools.forEach(vTool => {
           if (missionTools.some(mTool => mTool.includes(vTool) || vTool.includes(mTool))) {
             score += 5; // 每個匹配工具加5分
+            hasMatch = true;
           }
         });
       }
@@ -297,16 +300,19 @@
         // 簡單檢查是否包含相同地區關鍵字（可擴展為地理距離計算）
         if (missionLoc.includes(volunteerLoc) || volunteerLoc.includes(missionLoc)) {
           score += 5;
+          hasMatch = true;
         }
       }
 
-      // 4. 緊急度加成（高優先）
-      if (mission.urgency === 'high') {
-        score += 3;
-      } else if (mission.urgency === 'medium') {
-        score += 2;
-      } else if (mission.urgency === 'low') {
-        score += 1;
+      // 4. 緊急度加成（只有在有匹配時才加成）
+      if (hasMatch) {
+        if (mission.urgency === 'high') {
+          score += 3;
+        } else if (mission.urgency === 'medium') {
+          score += 2;
+        } else if (mission.urgency === 'low') {
+          score += 1;
+        }
       }
 
       console.log(`改良匹配分數 for mission ${mission.id}: ${score}`); // 除錯
