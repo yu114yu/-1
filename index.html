@@ -269,12 +269,12 @@
       // 先判斷技能匹配，若無技能匹配則不推薦（例外：任務標記為「有意願皆可」）
       let skillMatches = 0;
       if (mission.skills) {
-        const missionSkills = mission.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+        const missionSkills = mission.skills.toLowerCase().split(/[、,，\s]+/).filter(s => s.trim());
         // 任務包含「有意願皆可」時視為通配，算作有技能匹配
         if (missionSkills.includes('有意願皆可')) {
           skillMatches = 1;
         } else if (volunteerProfile.skills) {
-          const volunteerSkills = volunteerProfile.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+          const volunteerSkills = volunteerProfile.skills.toLowerCase().split(/[、,，\s]+/).filter(s => s.trim());
           volunteerSkills.forEach(vSkill => {
             if (missionSkills.some(mSkill => mSkill.includes(vSkill) || vSkill.includes(mSkill))) {
               skillMatches += 1;
@@ -293,8 +293,8 @@
 
       // 工具匹配（僅在有技能匹配時才計分，每個匹配工具 5 分）
       if (mission.requiredTools && volunteerProfile.tools) {
-        const missionTools = mission.requiredTools.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
-        const volunteerTools = volunteerProfile.tools.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+        const missionTools = mission.requiredTools.toLowerCase().split(/[、,，\s]+/).filter(s => s.trim());
+        const volunteerTools = volunteerProfile.tools.toLowerCase().split(/[、,，\s]+/).filter(s => s.trim());
         let toolMatches = 0;
         volunteerTools.forEach(vTool => {
           if (missionTools.some(mTool => mTool.includes(vTool) || vTool.includes(mTool))) {
