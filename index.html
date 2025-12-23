@@ -260,58 +260,66 @@
      * 新增：任務自動匹配系統
      ************************************************************/
 
-    // 改良版：計算任務與志工的匹配分數（基於技能、工具、位置與緊急度）
+    // 改良版：計算任務與志工的匹配分數（僅在技能匹配時才考慮工具/位置/緊急度）
     function calculateMatchScore(mission, volunteerProfile) {
       if (!volunteerProfile) {
         return 0;
       }
 
-      let score = 0;
-      let hasAbilityMatch = false; // 只有技能或工具匹配才算有能力匹配
-
-      // 1. 技能匹配（權重10分）
-      if (mission.skills && volunteerProfile.skills) {
-        const volunteerSkills = volunteerProfile.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+      // 先判斷技能匹配，若無技能匹配則不推薦（例外：任務標記為「有意願皆可」）
+      let skillMatches = 0;
+      if (mission.skills) {
         const missionSkills = mission.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
-        volunteerSkills.forEach(vSkill => {
-          if (missionSkills.some(mSkill => mSkill.includes(vSkill) || vSkill.includes(mSkill))) {
-            score += 10; // 每個匹配技能加10分
-            hasAbilityMatch = true;
-          }
-        });
+        // 任務包含「有意願皆可」時視為通配，算作有技能匹配
+        if (missionSkills.includes('有意願皆可')) {
+          skillMatches = 1;
+        } else if (volunteerProfile.skills) {
+          const volunteerSkills = volunteerProfile.skills.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+          volunteerSkills.forEach(vSkill => {
+            if (missionSkills.some(mSkill => mSkill.includes(vSkill) || vSkill.includes(mSkill))) {
+              skillMatches += 1;
+            }
+          });
+        }
       }
 
-      // 2. 工具匹配（權重5分）
+      // 若沒有技能匹配則直接回傳 0（不推薦）
+      if (skillMatches === 0) return 0;
+
+      let score = 0;
+
+      // 技能匹配分數（每個匹配技能 10 分）
+      score += skillMatches * 10;
+
+      // 工具匹配（僅在有技能匹配時才計分，每個匹配工具 5 分）
       if (mission.requiredTools && volunteerProfile.tools) {
-        const volunteerTools = volunteerProfile.tools.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
         const missionTools = mission.requiredTools.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+        const volunteerTools = volunteerProfile.tools.toLowerCase().split(/[,，\s]+/).filter(s => s.trim());
+        let toolMatches = 0;
         volunteerTools.forEach(vTool => {
           if (missionTools.some(mTool => mTool.includes(vTool) || vTool.includes(mTool))) {
-            score += 5; // 每個匹配工具加5分
-            hasAbilityMatch = true;
+            toolMatches += 1;
           }
         });
+        score += toolMatches * 5;
       }
 
-      // 3. 位置匹配（權重5分，只有在有能力匹配時才加分）
-      if (hasAbilityMatch && mission.location && volunteerProfile.location) {
+      // 位置匹配（僅在有技能匹配時才計分，符合則 +5）
+      if (mission.location && volunteerProfile.location) {
         const missionLoc = mission.location.toLowerCase();
         const volunteerLoc = volunteerProfile.location.toLowerCase();
-        // 簡單檢查是否包含相同地區關鍵字（可擴展為地理距離計算）
         if (missionLoc.includes(volunteerLoc) || volunteerLoc.includes(missionLoc)) {
           score += 5;
         }
       }
 
-      // 4. 緊急度加成（只有在有能力匹配時才加成）
-      if (hasAbilityMatch) {
-        if (mission.urgency === 'high') {
-          score += 3;
-        } else if (mission.urgency === 'medium') {
-          score += 2;
-        } else if (mission.urgency === 'low') {
-          score += 1;
-        }
+      // 緊急度加成（技能匹配存在時適用）
+      if (mission.urgency === 'high') {
+        score += 3;
+      } else if (mission.urgency === 'medium') {
+        score += 2;
+      } else if (mission.urgency === 'low') {
+        score += 1;
       }
 
       console.log(`改良匹配分數 for mission ${mission.id}: ${score}`); // 除錯
